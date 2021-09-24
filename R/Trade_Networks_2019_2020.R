@@ -119,9 +119,9 @@ edges <- trade_network %>%
 
 # Transfer of minutes played
 
-network_minutes <- tbl_graph(nodes = nodes, edges = edges, directed = TRUE)
+network <- tbl_graph(nodes = nodes, edges = edges, directed = TRUE)
 
-ggraph(network_minutes, layout = 'stress', circular = TRUE) + 
+ggraph(network, layout = 'stress', circular = TRUE) + 
   geom_edge_parallel(aes(label = minutes),
                      arrow = arrow(length = unit(2, 'mm')), 
                      start_cap = circle(2, 'mm'),
@@ -143,7 +143,7 @@ ggraph(network_minutes, layout = 'stress', circular = TRUE) +
 
 # Number of trades 
 
-ggraph(network_trades, layout = 'stress', circular = TRUE) + 
+ggraph(network, layout = 'stress', circular = TRUE) + 
   geom_edge_parallel(aes(label = trades),
                      arrow = arrow(length = unit(2, 'mm')), 
                      start_cap = circle(2, 'mm'),
@@ -164,7 +164,8 @@ ggraph(network_trades, layout = 'stress', circular = TRUE) +
   scale_color_manual(values = squadPrimaryCols)
 
 
-# To
+# Transfer of experience -------------------------------------------------------------------------
+
 bind_rows(trade_network %>% 
             filter(squadNickname_2019 != squadNickname_2020) %>% 
             rename(squadNickname = squadNickname_2020) %>% 
@@ -189,10 +190,18 @@ bind_rows(trade_network %>%
   arrange(result,minutes) %>% 
   ggplot(aes(x = minutes,y = fct_reorder2(squadNickname,result,-minutes),fill = result)) +
   geom_col(position = "dodge") +
-  tidytext::scale_y_reordered() + theme_bw()
+  tidytext::scale_y_reordered() + 
+  theme_bw() +
+  labs(y = "Squad",
+       x = "Total playing minutes",
+       fill = "Trade outcome",
+       title = "Total minutes played for each trade action",
+       subtitle = "Player movements between 2019 and 2020 season") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
 
 
-
+# Top 10 players leaving the league ---------------------------------------
 
 full_join(players_2019,players_2020,
           by = "playerId",
@@ -204,6 +213,8 @@ full_join(players_2019,players_2020,
   head(10) %>% 
   select(Player = displayName_2019,squad = squadNickname_2019,`Total season minutes played` = minutesPlayed_2019)
 
+
+# Ladder postion movement -------------------------------------------------
 
 ladders <- tibble::tribble(
   ~position, ~Squad, ~Season,
@@ -248,6 +259,8 @@ ggplot(ladders,aes(x = Season,y = position,col = Squad,group = Squad)) +
         plot.title = element_text(hjust = 0.5,size = 20),
         axis.title.x = element_text(size = 17))
  
+
+# Player trade accounting ------------------------------------------------------------
 
 left_join(edges %>% 
   filter(from != to) %>% 
