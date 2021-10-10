@@ -271,3 +271,6 @@ edges %>%
   mutate(diff = inward - outward) %>% 
   left_join(nodes,by = c("to" = "ID")) %>% 
   select(squadNickname,inward,outward,diff)
+
+
+
