@@ -1,84 +1,12 @@
 library(tidyverse)
 
-game_lists <- list(
-  #`2017_data`,
-                   #`2018_data`,
-                   #`2019_data`,
-                   `2020_data`
-                   #`2021_data`
-)
+source("R/load_netball_data.R")
+load_netball_data(2021)
 
-convert_season <- function(x){
-  x <- str_sub(x,1,5)
-  
-  switch (x,
-          "10083" = "Season 2017",
-          "10393" = "Season 2018",
-          "10724" = "Season 2019",
-          "11108" = "Season 2020",
-          "11391" = "Season 2021"
-  )
-}           
-
-filter_if_null_all <- function(df,df_col,cond){
-  
-  print(is.null(cond) || (exception == "All"))
-  df %>% 
-    {if (is.null(cond) || (cond == "All")) . else filter(.,{{df_col}} %in% cond) }
-}
-
-do_subs <- function(data) {
-  season = deparse(substitute(data))
-  tibble(
-    x = data %>%
-      map(safely( ~ .x[["playerSubs"]][["player"]])) %>% map("result"),
-    round = data %>% map_int(~.x[["matchInfo"]][["roundNumber"]]),
-    match = data %>% map_int(~.x[["matchInfo"]][["matchNumber"]]),
-    season = data %>% map_chr(~.x[["matchInfo"]][["matchId"]]) %>% map_chr(convert_season)) %>%
-    unnest_longer("x") %>% unnest_wider("x") %>%
-    left_join(data %>%
-                map_dfr( ~ .x[["teamInfo"]][["team"]]) %>% distinct(squadNickname, squadId),
-              by = "squadId")
-}
-
-do_starting_pos <- function(data){
-  tibble(x = data %>% 
-           map(~.x[["playerPeriodStats"]][["player"]]),
-         round = data %>% map_int(~.x[["matchInfo"]][["roundNumber"]]),
-         match = data %>% map_int(~.x[["matchInfo"]][["matchNumber"]]),
-         season = data %>% map_chr(~.x[["matchInfo"]][["matchId"]]) %>% map_chr(convert_season)) %>% 
-    unnest_longer("x") %>% unnest_wider("x") %>% 
-    left_join(data %>% 
-                map_dfr(~.x[["teamInfo"]][["team"]]) %>% distinct(squadNickname,squadId),
-              by = "squadId") %>%
-    select(playerId,round,match,squadNickname,startingPositionCode,period,season)
-}
-
-do_player_info <- function(data){
-  tibble(x = data %>% 
-           map(~.x[["playerInfo"]][["player"]]),
-         round = data %>% map_int(~.x[["matchInfo"]][["roundNumber"]]),
-         match = data %>% map_int(~.x[["matchInfo"]][["matchNumber"]]),
-         season = data %>% map_chr(~.x[["matchInfo"]][["matchId"]]) %>% map_chr(convert_season)) %>% 
-    unnest_longer("x") %>% unnest_wider("x")
-}
-
-subs <- map_dfr(game_lists,do_subs)
-
-starting_pos <- map_dfr(game_lists,do_starting_pos)
-
-playerInfo <- map_dfr(game_lists,do_player_info)
-
-
-
-add_player_names <- function(df){
-  df %>% 
-    left_join(playerInfo %>% distinct(playerId,displayName),by = "playerId")
-}
-
-positions_per_time <- bind_rows(
+pre_plot_data <- bind_rows(
   # starting positions
-  starting_pos %>% 
+  player_stats %>% 
+    select(round,match,period,squadNickname,playerId,startingPositionCode) %>% 
     mutate(periodSeconds = 0) %>% 
     rename(position = startingPositionCode),
   # Substitutions
@@ -91,22 +19,21 @@ positions_per_time <- bind_rows(
          time_on = lead(periodSeconds),
          time_on = if_else(is.na(time_on),900,time_on)) %>%
   ungroup() %>% 
-  add_player_names()
-
-total_rounds <- positions_per_time %>% 
-  group_by(season) %>% 
-  summarise(total_rounds = max(round))
-
-pre_plot_data <- positions_per_time %>% 
-  #filter_if_null_all(season,season_selector) %>% 
-  #filter_if_null_all(squadNickname,team_input) %>% 
-  #filter_if_null_all(displayName,pos_selector) %>% 
+  left_join(player_info) %>% 
   filter(period < 5)
+
+total_rounds <- player_stats %>% 
+  distinct(displayName,round) %>% 
+  count(displayName,name = "total_rounds")
 
 df_custom <- function(x){
   pre_plot_data %>% 
-    transmute("minute_{x}" := if_else(periodSeconds <= x*60 & time_on > x*60 & time_on - x*60 > 30,1,0))
+    transmute("minute_{x}" := if_else((periodSeconds <= x*60 | periodSeconds == 1) & time_on > x*60 & time_on - x*60 > 30,1,0))
 }
+
+
+  map_dfr(0:14,~mutate(pre_plot_data,minute = .x,
+                       is_on = if_else((periodSeconds <= .x*60 | periodSeconds == 1) & time_on > .x*60 & time_on - .x*60 > 30,1,0)))
 
 plot_data <- map_dfc(0:14,df_custom) %>% 
   bind_cols(pre_plot_data,.) %>% 
@@ -114,7 +41,7 @@ plot_data <- map_dfc(0:14,df_custom) %>%
   group_by(season,squadNickname,displayName,period,position,name) %>%
   summarise(n = sum(value),
             .groups = "drop_last") %>%
-  left_join(total_rounds,by = "season") %>%
+  left_join(total_rounds) %>%
   mutate(name = str_extract(name,"\\d+"),
          name = as.integer(name),
          displayName = as.character(displayName),
@@ -123,25 +50,35 @@ plot_data <- map_dfc(0:14,df_custom) %>%
          position = factor(position,levels = c("I","GK","GD","WD","C","WA","GA","GS"),ordered = T)) %>% 
   filter(n > 0)
 
-
-
-plot_data %>% 
-  filter(squadNickname == "Fever") %>% 
+plot_data %>%
+  mutate(displayName = str_remove(displayName,".*\\.")) %>% 
+  filter(squadNickname == "Lightning") %>%
+  # group_by(displayName) %>%
+  # filter(any(position %in% c("GA","GS"))) %>%
+  # ungroup() %>%
   mutate(period = paste("Qtr - ",period,sep = "")) %>% 
   ggplot(aes(x = name,y = position,fill = n)) + 
   geom_tile() +
   scale_x_continuous(breaks = 0:14) +
   #scale_fill_distiller(palette = "Greens",direction = 1,labels = scales::percent,limits = c(0,1)) +
   scale_fill_gradient2(high = '#d7191c',mid = '#ffffbf', low = '#1a9641',labels = scales::percent,limits = c(0,1),midpoint = 0.5) +
-  labs(x = "Minutes",
-       y = "",
-       fill = "% Time on court") + 
+  labs(title = "Lightning - Season 2021",
+       subtitle = "% Time on court for each player in each position they played",
+    x = "Minutes",
+       y = "Position",
+       fill = "% Time on court",
+    caption = "Data: Champion data") + 
   theme_bw() +
   theme(panel.grid.major.x = element_blank(),
         panel.grid.major.y = element_blank(),
         axis.ticks.x.bottom = element_line(),
-        axis.ticks.y.left = element_line()) +
-  facet_grid(displayName~period)
+        axis.ticks.y.left = element_line(),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust = 1),
+        plot.background = element_rect(color = "black"),
+        strip.text.y = element_text(size = 7)) +
+  facet_grid(displayName~period,scales = "free_y")
 
 
 # Selectors ---------------------------------------------------------------
@@ -221,3 +158,32 @@ pre_plot_data %>%
   theme(panel.grid.major = element_blank()) +
   scale_color_manual(values = plot_cols)
   
+
+
+plot_data %>%
+  filter(str_detect(displayName,"Allen|Stant|Garbin|Housby")) %>% 
+  group_by(displayName) %>%
+  filter(any(position %in% c("GA"))) %>%
+  ungroup() %>%
+  mutate(period = paste("Qtr - ",period,sep = "")) %>% 
+  ggplot(aes(x = name,y = position,fill = n)) + 
+  geom_tile() +
+  scale_x_continuous(breaks = 0:14) +
+  #scale_fill_distiller(palette = "Greens",direction = 1,labels = scales::percent,limits = c(0,1)) +
+  scale_fill_gradient2(high = '#d7191c',mid = '#ffffbf', low = '#1a9641',labels = scales::percent,limits = c(0,1),midpoint = 0.5) +
+  labs(title = "Pinch hitters in season 2020",
+       subtitle = "% Time on court in goal scoring positions",
+       x = "Minutes",
+       y = "Position",
+       fill = "% Time on court",
+       caption = "Data: Champion data") + 
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        axis.ticks.x.bottom = element_line(),
+        axis.ticks.y.left = element_line(),
+        plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust = 1),
+        plot.background = element_rect(colour = "black")) +
+  facet_grid(displayName~period,scales = "free_y")
