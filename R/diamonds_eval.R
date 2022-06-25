@@ -1,3 +1,7 @@
+library(tidyverse)
+source("R/load_netball_data.R")
+load_netball_data(2022)
+
 most_common_position <- 
  player_stats %>% 
    group_by(surname) %>% 
@@ -10,15 +14,24 @@ most_common_position <-
 
 shooter_stats <- 
   player_stats %>% 
+  #filter(round < 6) %>% 
   group_by(surname) %>% 
   summarise(across(c(minutesPlayed,goals,goal1,goal2,feedWithAttempt,rebounds,generalPlayTurnovers,attempt_from_zone1,attempt_from_zone2,feeds,feedWithAttempt),sum)) %>% 
   filter(attempt_from_zone1 > 50 | surname == "Garbin")
 
-
-shooter_stats %>% 
-  ggplot(aes(goals,generalPlayTurnovers)) +
-  geom_point() +
-  ggrepel::geom_text_repel(data = ~filter(.,goals > 100 | generalPlayTurnovers > 10), aes(label = surname),min.segment.length = 0)
+o_rtg <- 
+  player_stats %>% 
+  group_by(squadNickname) %>% 
+  summarise(across(c(goals,goal1,goal2, goalAttempts, goalMisses, generalPlayTurnovers,turnovers,feeds),~sum(.,na.rm = T))) %>%
+  left_join(player_stats %>% 
+              group_by(playerId) %>% 
+              filter(any(goals > 0)) %>% 
+              ungroup() %>% 
+              count(squadNickname,wt = rebounds,name = "offensiveRebounds"),
+            by = c("squadNickname")) %>% 
+  mutate(possessions = goalAttempts - offensiveRebounds + generalPlayTurnovers,
+         poss_wt = possessions/mean(possessions),
+         offRating = goals/possessions*100)
 
 
 shooter_stats %>% 
@@ -32,8 +45,10 @@ shooter_stats %>%
   left_join(most_common_position) %>% 
   mutate(pct_label  = scales::percent(pct,accuracy = 1)) %>% 
   ggplot(aes(x = pct,y = fct_inorder(surname))) +
-  geom_point(aes(size = attempt)) +
-  geom_text(data = ~filter(.,Zone == "Normal"),aes(label = pct_label),col = "white") +
+  geom_point(aes(size = attempt),shape = 21,fill = "black",col = "white") +
+  geom_label(
+    data = ~filter(.,Zone == "Normal"),
+    aes(label = pct_label),col = "white",fill = "black",size = 3) +
   scale_size_area(max_size = 20) +
   scale_x_continuous(labels = ~scales::percent(.x,accuracy = 1)) +
   facet_grid(fct_rev(startingPositionCode)~Zone,scales = "free") + 
@@ -49,6 +64,24 @@ shooter_stats %>%
     plot.caption = element_text(hjust = 1),
     plot.background = element_rect(colour = "black"))
 
+
+shooter_stats %>% 
+  filter(surname %in% c("Dwyer","Bueta","Austin","Wallam","Garbin","Koenen","Wood")) %>% 
+  select(surname,goal1,goal2,attempt_from_zone1,attempt_from_zone2) %>% 
+  transmute(`Player` = surname,
+            `Normal goal` = goal1,
+            `Normal attempts` = attempt_from_zone1,
+            `Super goal` = goal2,
+            `Super attempts` = attempt_from_zone2,
+            `Makes per shot` = ((goal1 + goal2)/(attempt_from_zone1 + attempt_from_zone2)) %>% scales::percent(accuracy = 0.1),
+            `Normal accuracy` = (goal1/attempt_from_zone1) %>% scales::percent(accuracy = 0.1),
+            `Super accuracy` = (goal2/attempt_from_zone2) %>% scales::percent(accuracy = 0.1),
+            `Goals per shot` = ((goal1 + goal2 * 2)/(attempt_from_zone1 + attempt_from_zone2)) ) %>% 
+  arrange(desc(`Normal accuracy`)) %>% 
+  knitr::kable() %>% 
+  kableExtra::kable_classic() %>% 
+  kableExtra::kable_styling("striped") %>% 
+  kableExtra::add_footnote("Data: Champion Data",notation = "none")
   
 
 # Usage -------------------------------------------------------------------
@@ -92,24 +125,88 @@ shooter_stats %>%
     plot.subtitle = element_text(hjust = 0.5),
     plot.caption = element_text(hjust = 1),
     plot.background = element_rect(colour = "black"))
+
+
+# Shooter stats -----------------------------------------------------------
+
+plot_data_pre <- player_stats %>%
+  select(-startingPositionCode) %>% 
+  left_join(most_common_position) %>% 
+  group_by(surname,startingPositionCode,squadNickname) %>%
+  filter(startingPositionCode %in% c("GA","GS"),sum(minutesPlayed) > 150) %>% 
+  summarise(across(c(feeds,goalAssists,generalPlayTurnovers,goals,goalAttempts,minutesPlayed),~mean(.x)/11*4)) %>% 
+  mutate(feed_per_gpt = feeds/generalPlayTurnovers) %>% 
+  arrange(startingPositionCode) %>% 
+  #select(-minutesPlayed) 
+  rename("Feeds" = "feeds",
+         "Goal assists" = "goalAssists",
+         "Goals" = "goals",
+         "Goal Attempts" = "goalAttempts",
+         "GP Turnovers" = "generalPlayTurnovers",
+         "Minutes played" = "minutesPlayed")
+
+plot_data_post <- player_stats %>%
+  select(-startingPositionCode) %>% 
+  left_join(most_common_position) %>% 
+  group_by(surname,startingPositionCode,squadNickname) %>%
+  filter(startingPositionCode %in% c("GA","GS"),sum(minutesPlayed) > 150) %>% 
+  summarise(across(c(feeds,goalAssists,generalPlayTurnovers,goals,goalAttempts,minutesPlayed),~sum(.x)/sum(minutesPlayed)*60)) %>% 
+  left_join(o_rtg %>%
+              select(squadNickname,poss_wt)) %>%
+  group_by(surname,startingPositionCode,squadNickname) %>%
+  mutate(across(c(feeds,goalAssists,generalPlayTurnovers,goals,goalAttempts,minutesPlayed),~.x/poss_wt)) %>%
+  mutate(feed_per_gpt = feeds/generalPlayTurnovers) %>% 
+  arrange(startingPositionCode) %>% 
+  select(-poss_wt) %>% 
+  rename("Feeds" = "feeds",
+         "Goal assists" = "goalAssists",
+         "Goals" = "goals",
+         "Goal Attempts" = "goalAttempts",
+         "GP Turnovers" = "generalPlayTurnovers",
+         "Minutes played" = "minutesPlayed")
+
+
+plot_data_pre %>% 
+  select(-feed_per_gpt) %>% 
+  pivot_longer(cols = -3:-1) %>% 
+  ggplot(aes(x = value,y = tidytext::reorder_within(surname,value,list(name,startingPositionCode)))) +
+  geom_col(aes(fill = startingPositionCode)) +
+  tidytext::scale_y_reordered() +
+  scale_fill_manual(values = c("GA" = "#1874CD","GS" = "#EE2C2C")) +
+  facet_wrap(~name,scales = "free",nrow = 2) +
+  labs(title = "Total statistcis",
+       subtitle = "Accumulated stats from season 2022",
+       y = "",
+       x = "Stat toal count",
+       fill = "Team",
+       caption = "Data: Champion Data") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust = 1),
+        plot.background = element_rect(colour = "black"))
+
+plot_data_post %>% 
+  select(-feed_per_gpt) %>% 
+  pivot_longer(cols = -3:-1) %>% 
+  ggplot(aes(x = value,y = tidytext::reorder_within(surname,value,list(name,startingPositionCode)))) +
+  geom_col(aes(fill = startingPositionCode)) +
+  tidytext::scale_y_reordered() +
+  scale_fill_manual(values = c("GA" = "#1874CD","GS" = "#EE2C2C")) +
+  facet_wrap(~name,scales = "free",nrow = 2) +
+  labs(title = "Adjusted statistcis",
+       subtitle = "Totals adjusted for playing time and team pace\ncounts reflect stat per 60 minutes at 2022 league average pace",
+       y = "",
+       x = "Adjusted count",
+       fill = "Team",
+       caption = "Data: Champion Data") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        plot.caption = element_text(hjust = 1),
+        plot.background = element_rect(colour = "black"))
   
     
 
 # Mids --------------------------------------------------------------------
-
-  o_rtg <- 
-    player_stats %>% 
-    group_by(squadNickname) %>% 
-    summarise(across(c(goals,goal1,goal2, goalAttempts, goalMisses, generalPlayTurnovers,turnovers,feeds),~sum(.,na.rm = T))) %>%
-    left_join(player_stats %>% 
-                group_by(playerId) %>% 
-                filter(any(goals > 0)) %>% 
-                ungroup() %>% 
-                count(squadNickname,wt = rebounds,name = "offensiveRebounds"),
-              by = c("squadNickname")) %>% 
-    mutate(possessions = goalAttempts - offensiveRebounds + generalPlayTurnovers,
-           poss_wt = possessions/mean(possessions),
-           offRating = goals/possessions*100)
 
 plot_data_pre <- player_stats %>%
   select(-startingPositionCode) %>% 
@@ -133,11 +230,11 @@ plot_data_post <- player_stats %>%
     left_join(most_common_position) %>% 
     group_by(surname,startingPositionCode,squadNickname) %>%
     filter(startingPositionCode %in% c("WA","C","WD"),sum(minutesPlayed) > 150) %>% 
-    summarise(across(c(feeds,feedWithAttempt,goalAssists,pickups,gain,generalPlayTurnovers),~sum(.x)/sum(minutesPlayed)*60)) %>% 
+    summarise(across(c(feeds,feedWithAttempt,goalAssists,pickups,gain,generalPlayTurnovers,deflections),~sum(.x)/sum(minutesPlayed)*60)) %>% 
   left_join(o_rtg %>%
               select(squadNickname,poss_wt)) %>%
   group_by(surname,startingPositionCode,squadNickname) %>%
-  mutate(across(c(feeds,feedWithAttempt,goalAssists,pickups,gain,generalPlayTurnovers),~.x/poss_wt)) %>%
+  mutate(across(c(feeds,feedWithAttempt,goalAssists,pickups,gain,generalPlayTurnovers,deflections),~.x/poss_wt)) %>%
   mutate(feed_per_gpt = feeds/generalPlayTurnovers) %>% 
   arrange(startingPositionCode,-gain) %>% 
   select(-poss_wt) %>% 
@@ -149,20 +246,6 @@ plot_data_post <- player_stats %>%
          "Turnovers" = "generalPlayTurnovers",
          "Feed per turnover" = "feed_per_gpt")
 
-plot_data %>% 
-  pivot_longer(cols = -3:-1) %>% ungroup() %>% distinct(name) %>% pull(name) %>% clipr::write_clip()
-  ggplot(aes(x = value,y = tidytext::reorder_within(surname,value,list(name,startingPositionCode)))) +
-  geom_point() +
-  tidytext::scale_y_reordered() +
-  facet_grid(startingPositionCode~name,scales = "free")
-
-
-plot_data_post %>% 
-  pivot_longer(cols = -3:-1) %>% 
-  ggplot(aes(x = value,y = tidytext::reorder_within(surname,value,list(name,startingPositionCode)))) +
-  geom_col(aes(fill = startingPositionCode)) +
-  tidytext::scale_y_reordered() +
-  facet_wrap(~name,scales = "free",nrow = 2)
 
 plot_data_pre %>% 
   pivot_longer(cols = -3:-1) %>% 

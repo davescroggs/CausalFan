@@ -1,14 +1,16 @@
 library(tidyverse)
 library(gt)
+library(gtExtras)
 library(magrittr)
 library(ggnewscale)
+library(glue)
 
 source("R/load_netball_data.R")
 load_netball_data(2017:2022)
 
-rnd = 5
+rnd = 13
 ssn = 2022
-mtch = 3
+mtch = 2
 
 teams <- schedule %>% 
   filter(round == rnd,season == ssn,match == mtch) %>% 
@@ -18,7 +20,7 @@ teams <- schedule %>%
 team_list = team_info %>% select(squadId,squadNickname) %>% deframe()
 team_names <- map_chr(teams,~team_list[as.character(.x)])
 
-SquadName_Colours <- SquadName_Colours[names(SquadName_Colours) %in% team_names]
+#SquadName_Colours <- SquadName_Colours[names(SquadName_Colours) %in% team_names]
 
 
 
@@ -40,7 +42,7 @@ o_rtg  %>%
   transmute(round,match,opponent = squadNickname,dPoss = possessions,dGoals = goals,dFeeds = feeds) %>% 
   full_join(o_rtg) %>% 
   filter(opponent != squadNickname) %>% 
-  filter(season %in% 2021:2022,squadNickname %in% team_names) %>% 
+  filter(season %in% 2022,squadNickname %in% team_names) %>% 
   group_by(season, squadNickname) %>% 
   summarise(
     Possessions = (sum(possessions)/n()) %>% round(0),
@@ -67,7 +69,7 @@ o_rtg  %>%
   transmute(round,match,opponent = squadNickname,dPoss = possessions,dGoals = goals,dFeeds = feeds) %>% 
   full_join(o_rtg) %>% 
   filter(opponent != squadNickname) %>% 
-  filter(season %in% 2021:2022) %>% 
+  filter(season %in% 2022) %>% 
   group_by(season) %>% 
   summarise(
     Possessions = (sum(possessions)/n()) %>% round(0),
@@ -84,10 +86,11 @@ o_rtg  %>%
   ggplot(aes(x = value, y = Team)) +
   geom_point(aes(fill = Measure,size = gor,shape = gor),col = "black") +
   geom_text(aes(label = value), col = "black") +
-  scale_fill_manual(values = c("#FC8D62", "#8DA0CB", "#E78AC3")) +
+  scale_fill_manual(values = c("#1E90FF", "#FF3030")) +
   scale_size_manual(values = c("TRUE" = 9,"FALSE" = 7),guide = "none") +
   scale_shape_manual(values = c("TRUE" = 23,"FALSE" = 21),guide = "none") +
   facet_wrap(~name,ncol = 1) +
+  expand_limits(x = c(60,90)) +
   theme_minimal() +
   labs(title = "Team rating",
     subtitle = glue("Possessions, Offensive and denfensive ratings\nfrom round {rnd}, 2021 and 2022 season so far"),
@@ -99,15 +102,82 @@ o_rtg  %>%
     plot.caption = element_text(hjust = 1),
     plot.background = element_rect(colour = "black"),
     panel.grid.major.y = element_line(colour = "black")) + 
-  guides(fill = guide_legend(override.aes = list(fill = c("#FC8D62", "#8DA0CB", "#E78AC3"),
-                                                 col = rep("black",3),
-                                                 shape = c(rep(21,2),23),
-                                                 size = c(rep(3,2),5))))
+  guides(fill = guide_legend(override.aes = list(fill = c("#1E90FF", "#FF3030"),
+                                                 col = rep("black",2),
+                                                 shape = c(21,23),
+                                                 size = c(3,5))))
 
 
 
 
 # Game day O Rating -------------------------------------------------------
+
+win_loss <- team_stats %>% 
+  filter(season == 2022) %>% 
+  group_by(season,round,match,squadId) %>% 
+  summarise(goals = sum(goals)) %>% 
+  full_join(.,.,by = c("season","round","match"),
+            suffix = c("",".join")) %>% 
+  filter(squadId != squadId.join) %>%
+  mutate(wl = case_when(goals == goals.join ~ 0.5,
+                        goals < goals.join ~ 0,
+                        goals > goals.join ~ 1,
+                        TRUE ~ NA_real_)) %>% 
+  left_join(team_info) %>% 
+  select(-goals,-contains(".join"),-squadId)
+
+o_rtg %>% 
+  ungroup() %>% 
+  transmute(season,round,match,squadNickname,
+    off_rtg = (goals/possessions*100) %>% round(1)) %>% 
+  arrange(squadNickname,round) %>% 
+  full_join(.,.,by = c("season", "round","match"),suffix = c("",".join")) %>% 
+  filter(season == 2022,squadNickname %in% team_names,squadNickname != squadNickname.join) %>% 
+  rename(def_rtg = off_rtg.join, opponent = squadNickname.join) %>% 
+  left_join(win_loss, by = c("squadNickname", "season", "round")) %>% 
+  transmute(squadNickname,Round = round,off_rtg,def_rtg,wl,Opponent = opponent) %>% 
+  group_by(squadNickname) %>% 
+  rename(`Off Rating` = off_rtg,
+         `Def Rating` = def_rtg,
+         `Win/Loss` = wl) %>% 
+  #janitor::clean_names(case = "sentence")
+  gt() %>% 
+  gt::opt_table_lines(extent = "all") %>%
+  gtExtras::gt_highlight_rows(columns = 5:6,
+                              rows = `Win/Loss` == "Win",
+                              fill = "#013369") %>% 
+  gtExtras::gt_highlight_rows(columns = 5:6,
+                              rows = `Win/Loss` == "Loss",
+                              fill = "#D50A0A")
+
+o_rtg %>% 
+  ungroup() %>% 
+  transmute(season,round,match,squadNickname,
+            off_rtg = (goals/possessions*100) %>% round(1),
+            goals) %>% 
+  arrange(squadNickname,round) %>% 
+  full_join(.,.,by = c("season", "round","match"),suffix = c("",".join")) %>% 
+  filter(season == 2022,squadNickname != squadNickname.join) %>% 
+  rename(def_rtg = off_rtg.join, opponent = squadNickname.join) %>% 
+  left_join(win_loss, by = c("squadNickname", "season", "round")) %>% 
+  transmute(Team = squadNickname,
+            Round = round,
+            off_rtg,
+            def_rtg,wl,
+            Opponent = opponent,
+            goals,goals.join) %>% 
+  group_by(Team) %>% 
+  summarise(Wins = sum(wl),
+            `Off rating` = list(off_rtg),
+            `Def rating` = list(def_rtg),
+            Outcomes = list(wl),
+            goal_diff = sum(goals)/sum(goals.join)) %>% 
+  arrange(-Wins,-goal_diff) %>% 
+  select(-goal_diff) %>% 
+  gt() %>% 
+  gtExtras::gt_sparkline(`Off rating`) %>% 
+  gtExtras::gt_sparkline(`Def rating`) %>% 
+  gtExtras::gt_plt_winloss(Outcomes,max_wins = 7)
 
 
 game_ortg <- player_stats %>%
@@ -129,6 +199,7 @@ game_ortg %>%
             Period = as.character(period),
             Possessions = possessions,
             Turnovers = generalPlayTurnovers,
+            Misses = goalMisses,
             `Off Rebounds` = offensiveRebounds, 
             goalAttempts,
             goals) %>% 
@@ -143,6 +214,7 @@ game_ortg %>%
                 Period = as.character(period),
                 Possessions = possessions,
                 Turnovers = generalPlayTurnovers,
+                Misses = goalMisses,
                 `Off Rebounds` = offensiveRebounds, 
                 goalAttempts,
                 goals) %>% 
@@ -192,6 +264,9 @@ game_ortg %>%
     source_note = "Data: Champion Data")
   
 
+# Recent games + O Rating -------------------------------------------------
+
+
 
 # Squads ------------------------------------------------------------------
 
@@ -231,7 +306,7 @@ combos <- player_stats %>%
 
 squads <- 
 combos %>% 
-  filter(match == mtch,squadId == team_info$squadId[team_info$squadNickname == team_names[1]]) %>%
+  filter(match == mtch,squadId == team_info$squadId[team_info$squadNickname == team_names[2]]) %>%
   left_join(player_info) %>% 
   arrange(season,round,match,squadId,startingPositionCode,period,time) %>%
   group_by(season,round,match,squadId,period,startingPositionCode) %>% 
@@ -340,7 +415,8 @@ combos %>%
     str_trim()
   
   ggplot(data = plot_data, aes(x = minutes,y = score_difference,group = 1)) +
-    geom_step(aes(col = SS_YN)) +
+    #geom_step(aes(col = SS_YN)) +
+    geom_line(aes(col = SS_YN)) +
     #geom_point(data = filter(plot_data,make_miss %in% c("2pt Miss","miss")),aes(col = make_miss),shape = 1,size = 2) +
     # geom_point(data = plot_data %>% slice_min(score_difference,n = 1,with_ties = F),shape = 16,size = 4,col = "red") +
     # geom_point(data = plot_data %>% slice_max(score_difference,n = 1,with_ties = F),shape = 16,size = 4,col = "red") +
@@ -368,12 +444,41 @@ combos %>%
          subtitle = paste("Round",rnd, "score worm"),
          caption = "Plot adapted from Champion Data Match Centre")
   
+
+# |- Score worm condensed ----------------------------------------------------
+  game_names <- 
+    rev(team_names) %>% 
+    str_pad(width = 20,side = "both") %>% 
+    paste(collapse = "v") %>% 
+    str_trim() %>% paste("\n")
   
+  ggplot(data = plot_data, aes(x = minutes,y = score_difference,group = 1)) +
+    geom_smooth(method = 'loess', span = 0.05,se = F,col = "black") +
+    geom_hline(yintercept = 0,) +
+    geom_vline(xintercept = c(15,30,45,60)) +
+    geom_point(data = ~tail(.,1),col = "red") +
+    ggrepel::geom_text_repel(data = ~tail(.,1),aes(label = abs(score_difference)),nudge_x = 1) +
+    scale_colour_manual(values = c("Super" = "firebrick1","Normal" = "black")) +
+    theme_void() +
+    theme(axis.text.x = element_text(angle = 90),
+          plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5),
+          plot.caption = element_text(hjust = 1),
+          #plot.background = element_rect(colour = "black"),
+          axis.title.y = element_text(angle = 90),
+          plot.margin = margin(15, 15, 15, 15,unit = "pt")) +
+    scale_x_continuous(breaks = seq(0,60,5),expand = c(0, 0)) +
+    scale_y_continuous(breaks = seq(-25,25,5),limits = c(-28,28)) +
+    labs(y = game_names,
+         caption = "Data: Champion Data") +
+    coord_cartesian(xlim = c(0,62),clip = "off")
 
 # Shooters ----------------------------------------------------------------
 
 player_stats %>%   
-  filter(season == ssn,round == rnd,match == mtch,goals > 0,squadNickname == team_names[1]) %>% 
+    filter(season == ssn,round == rnd,match == mtch,squadNickname == team_names[1]) %>%
+    group_by(playerId) %>% 
+    filter(any(attempt_from_zone1 > 0)) %>% 
     group_by(squadNickname,period) %>% 
     summarise(across(c(goals,goal1,goal2,attempt_from_zone1,attempt_from_zone2),sum)) %>% 
     ungroup() %>% 
@@ -388,7 +493,9 @@ player_stats %>%
     select(-c(goal1,goal2,attempt_from_zone1,attempt_from_zone2)) %>% 
     bind_rows(
       player_stats %>%   
-        filter(season == ssn,round == rnd,match == mtch,goals > 0,squadNickname == team_names[2]) %>% 
+        filter(season == ssn,round == rnd,match == mtch,squadNickname == team_names[2]) %>%
+        group_by(playerId) %>% 
+        filter(any(attempt_from_zone1 > 0)) %>% 
         group_by(squadNickname,period) %>% 
         summarise(across(c(goals,goal1,goal2,attempt_from_zone1,attempt_from_zone2),sum)) %>% 
         ungroup() %>% 
@@ -479,22 +586,6 @@ player_stats %>%
     plot.caption = element_text(hjust = 1),
     plot.background = element_rect(colour = "black"))
 
-
-
-goals %>% 
-  filter(season == ssn) %>% 
-  mutate(periodSeconds = if_else(periodSeconds > 900L, 900L,periodSeconds),
-    trimester = cut_width(periodSeconds,300,center = 150)) %>% 
-  count(trimester,squadNickname,round,wt = scorepoints) %>% 
-  group_by(trimester,round,squadNickname) %>% 
-  summarise(n = n/4) %>% 
-  ggplot(aes(trimester,n,col = squadNickname,group = squadNickname)) +
-  geom_point() +
-  geom_line() +
-  scale_colour_manual(values = SquadName_Colours) +
-  facet_wrap(~round)
-
-
 goals %>% 
   filter(season == ssn,squadNickname %in% team_names,round == rnd) %>%
   mutate(minute = floor(periodSeconds/60),
@@ -519,7 +610,8 @@ goals %>%
 
 goals %>% 
   filter(season == ssn,squadNickname %in% team_names,round == rnd) %>%
-  mutate(minute = floor(periodSeconds/60),
+  mutate(periodSeconds = if_else(periodSeconds == 900, 899L,periodSeconds),
+    minute = floor(periodSeconds/60),
          shottype = case_when(
            scoreName == "2pt Goal" ~ "Super made",
            scoreName == "2pt Miss" ~ "Super missed",
@@ -529,7 +621,7 @@ goals %>%
          shottype = factor(shottype,levels = c("Normal missed", "Super missed","Super made","Normal made"),ordered = T,
 )) %>% 
   count(squadNickname,round,period,minute,shottype) %>% 
-  mutate(n = if_else(shottype %in% c("Super missed","Super made"),2L * n,n)) %>% 
+  mutate(n = if_else(shottype %in% c("Super missed","Super made"),2L * n,n)) %>%
   ggplot(aes(x = minute, y = n,fill = shottype)) +
   geom_col(aes(col = shottype)) +
   scale_fill_manual(values = c("Normal made" = "#1874CD","Super made" = "#FF3030", "Normal missed" = "white", "Super missed" = "white")) +
@@ -549,8 +641,10 @@ goals %>%
   guides(fill = guide_legend(override.aes = list(col = c("#1874CD", "#FF3030","black","black")))) +
   facet_grid(squadNickname ~ paste("Qtr -",period))
 
+# Possession outcomes -----------------------------------------------------
 
-plot_dat <- o_rtg %>% 
+plot_dat <- 
+  o_rtg %>% 
   ungroup() %>% 
   filter(season == ssn,squadNickname %in% team_names,round == rnd) %>%
   mutate(effective_misses = goalMisses - offensiveRebounds) %>% 
@@ -562,6 +656,7 @@ plot_dat <- o_rtg %>%
     name == "goal1" ~ "Normals",
     name == "goal2" ~ "Supers"),
     name = factor(name,levels = c("Turnovers", "Effective misses", "Supers", "Normals"),ordered = T))
+
 
 
 plot_dat %>% 
@@ -586,6 +681,30 @@ plot_dat %>%
     legend.position = "bottom") +
   expand_limits(x = plot_dat %>% count(squadNickname,wt = value) %$% (max(n) + 3))
 
+# Offensive outcomes
+
+plot_dat %>% 
+  ggplot(aes(value,squadNickname)) +
+  geom_col(aes(fill = name), col = "black") +
+  geom_text(data = plot_dat %>% add_count(squadNickname,wt = value),aes(x = n,label = possessions),hjust = 0,size = 6,nudge_x = 1) +
+  geom_text(aes(label = value,group = name),position = position_stack(vjust = 0.5)) +
+  scale_fill_brewer(palette = "Set1") +
+  #scale_x_continuous(breaks = seq(0,100,10)) +
+  theme_bw() +
+  labs(title = paste("Round",rnd,"goal outcomes"),
+       y = "",
+       x = "Goal outcome count",
+       fill = "Stat type",
+       caption = "Data: Champion Data") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.caption = element_text(hjust = 1),
+        plot.background = element_rect(colour = "black"),
+        panel.grid.major.y = element_blank(),
+        legend.position = "bottom") +
+  expand_limits(x = plot_dat %>% count(squadNickname,wt = value) %$% (max(n) + 3))
 
 player_stats %>% 
   group_by(season,squadNickname,round) %>% 
@@ -627,3 +746,47 @@ o_rtg %>%
   summarise(pDiff = max(possessions) - min(possessions),
             squadNickname[possessions == max(possessions)]) %>% 
   arrange(-pDiff)
+
+
+o_rtg %>% 
+  ungroup() %>% 
+  transmute(season,round,match,squadNickname,
+            off_rtg = (goals/possessions*100) %>% round(1)) %>% 
+  arrange(squadNickname,round) %>% 
+  full_join(.,.,by = c("season", "round","match"),suffix = c("",".join")) %>% 
+  filter(season == 2022,squadNickname != squadNickname.join) %>% 
+  rename(def_rtg = off_rtg.join, opponent = squadNickname.join) %>% 
+  group_by(squadNickname) %>% 
+  summarise(across(c(off_rtg,def_rtg),mean)) %>% 
+  mutate(off_rtg = dense_rank(desc(off_rtg)),
+         def_rtg = dense_rank(def_rtg)) %>% 
+  arrange(off_rtg)
+
+
+o_rtg %>% 
+  ungroup() %>% 
+  transmute(season,round,match,squadNickname,
+            off_rtg = (goals/possessions*100) %>% round(1)) %>% 
+  arrange(squadNickname,round) %>% 
+  full_join(.,.,by = c("season", "round","match"),suffix = c("",".join")) %>% 
+  filter(season == 2022,squadNickname != squadNickname.join) %>% 
+  rename(def_rtg = off_rtg.join, opponent = squadNickname.join) %>% 
+  mutate(net_rtg = off_rtg - def_rtg) %>% 
+  group_by(squadNickname) %>% 
+  summarise(across(c(off_rtg,def_rtg,net_rtg),mean)) %>% 
+  arrange(-net_rtg)
+
+
+player_stats %>% 
+  ungroup() %>% 
+  filter(season == 2022) %>% 
+  count(playerId, wt = generalPlayTurnovers, sort = T) %>% 
+  left_join(player_info %>% distinct(playerId,.keep_all = T))
+
+team_stats %>% 
+  filter(season == 2022) %>% 
+  group_by(squadId) %>% 
+  summarise(across(c(goals,goalAttempts,generalPlayTurnovers),sum)) %>% 
+  mutate(acc = goals/goalAttempts) %>% 
+  left_join(team_info) %>% 
+  arrange(acc)

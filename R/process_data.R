@@ -3,8 +3,9 @@
 library(tidyverse)
 library(magrittr)
 
-dat <- map(paste("data/",2009:2022,"_data.RDS",sep = ""),read_rds) %>% 
-  flatten()
+dat <- map(paste("data/",2022,"_data.RDS",sep = ""),read_rds) %>% 
+  flatten() %>% 
+  discard(~.x[["matchInfo"]][["matchStatus"]] == "scheduled")
 
 safe_date <- possibly(.f = ~as.Date(.x) %>% lubridate::year(),otherwise = NA_real_)
 
@@ -65,8 +66,7 @@ team_info <- extracted_metrics %>%
 player_stats <- extracted_metrics %>% 
   unnest_specific(player_stats) %>% 
 mutate(goals = if_else(!is.na(goal2),goal1 + goal2 * 2L,goals), 
-       generalPlayTurnovers = if_else(is.na(generalPlayTurnovers),turnovers,generalPlayTurnovers),
-       possessions = goalAttempts - offensiveRebounds + generalPlayTurnovers,
+       #generalPlayTurnovers = if_else(is.na(generalPlayTurnovers),turnovers,generalPlayTurnovers),
          squadId = if_else(squadId == 0,NA_integer_,squadId)) %>% 
   group_by(season,round,match) %>% 
   fill(squadId,.direction = "downup") %>% 
@@ -86,10 +86,16 @@ subs <- extracted_metrics %>%
   left_join(team_info,by = "squadId")
 
 team_stats <- extracted_metrics %>% 
-  unnest_specific(team_stats) 
+  unnest_specific(team_stats) %>% 
+  mutate(goals = if_else(!is.na(goal2),goal1 + goal2 * 2L,goals), 
+         #generalPlayTurnovers = if_else(is.na(generalPlayTurnovers),turnovers,generalPlayTurnovers)
+         )
 
 player_match_stats <- extracted_metrics %>% 
-  unnest_specific(player_match_stats) 
+  unnest_specific(player_match_stats) %>% 
+  mutate(goals = if_else(!is.na(goal2),goal1 + goal2 * 2L,goals), 
+         #generalPlayTurnovers = if_else(is.na(generalPlayTurnovers),turnovers,generalPlayTurnovers)
+         )
 
 starting_pos <- player_stats %>% 
   left_join(team_info,by = "squadId") %>% 
