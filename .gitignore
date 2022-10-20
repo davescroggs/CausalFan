@@ -2,7 +2,7 @@
 .Rhistory
 *.RData
 .Ruserdata
-
+data/*.Rmd
 *.png
 *.RDS
 *.DS_Store

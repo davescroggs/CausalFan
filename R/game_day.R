@@ -8,9 +8,9 @@ library(glue)
 source("R/load_netball_data.R")
 load_netball_data(2017:2022)
 
-rnd = 13
+rnd = 16
 ssn = 2022
-mtch = 2
+mtch = 1
 
 teams <- schedule %>% 
   filter(round == rnd,season == ssn,match == mtch) %>% 
